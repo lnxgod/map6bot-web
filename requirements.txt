@@ -1,0 +1,15 @@
+
+---
+
+# **requirements.txt**
+
+Below is a sample pinned set of dependencies known to work well together. Adjust versions as needed:
+
+```txt
+dash==2.11.1
+dash_bootstrap_components==1.2.1
+plotly==5.16.1
+pandas==2.0.3
+numpy==1.24.3
+scipy==1.10.1
+pyinstaller==5.13.0
