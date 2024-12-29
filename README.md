@@ -52,3 +52,4 @@ The tool spins up a **local Dash server**, automatically opens your default brow
    ```bash
    python -m venv venv
    source venv/bin/activate   # or venv\Scripts\activate on Windows
+3. pip install -r requirements.txt
