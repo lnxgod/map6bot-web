@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JB4/Lap3 Log Analyzer - HTML5 Version</title>
+  <!-- Minimal Bootstrap for styling (optional) -->
+  <link 
+    rel="stylesheet" 
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+  />
+  <!-- Plotly.js -->
+  <script src="https://cdn.plot.ly/plotly-2.25.2.min.js"></script>
+  <style>
+    .bordered {
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+    }
+    #uploadArea {
+      border: 1px dashed #999;
+      border-radius: 5px;
+      height: 60px;
+      line-height: 60px;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    #uploadArea.hover {
+      background-color: #f0f0f0;
+    }
+    .axis-settings {
+      margin-bottom: 15px;
+    }
+    .axis-settings .form-control {
+      margin-bottom: 5px;
+    }
+    #graphOutput {
+      width: 100%;
+      height: 600px;
+    }
+  </style>
+</head>
+
+<body class="container-fluid">
+  <h1 class="mt-4">JB4/Lap3 Log Analyzer - Pure HTML5/JS</h1>
+  <p><em>Credits to original code by Will Hatzer. Converted to pure HTML5/JS for demonstration.</em></p>
+
+  <!-- Upload area -->
+  <div id="uploadArea">
+    <span>Drag/Drop or Click to Select CSV</span>
+    <input 
+      type="file" 
+      id="fileInput" 
+      accept=".csv" 
+      style="position: absolute; opacity: 0; width:100%; height:60px; cursor: pointer;"
+    />
+  </div>
+
+  <!-- Sensitivity controls & re-scan button -->
+  <div class="row">
+    <div class="col-md-3 mb-3">
+      <label for="fourCylSens" class="form-label">4Cyl Sensitivity:</label>
+      <input 
+        type="number" 
+        class="form-control" 
+        id="fourCylSens" 
+        value="3.5" 
+        min="0" 
+        max="20" 
+        step="0.1"
+      />
+    </div>
+    <div class="col-md-3 mb-3">
+      <label for="sixCylSens" class="form-label">6Cyl Sensitivity:</label>
+      <input 
+        type="number" 
+        class="form-control" 
+        id="sixCylSens" 
+        value="6.5" 
+        min="0" 
+        max="20" 
+        step="0.1"
+      />
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button id="rescanButton" class="btn btn-primary w-100">Re-Scan Log</button>
+    </div>
+  </div>
+
+  <!-- Warning area and report area -->
+  <div id="logLengthWarning" class="bordered text-danger"></div>
+  <div id="reportOutput" class="bordered" style="height: 300px; overflow-y: auto;"></div>
+
+  <hr />
+
+  <h4>Plotly Multi-Axis Controls</h4>
+  <!-- Axis controls -->
+  <div class="row axis-settings">
+    <div class="col-md-3">
+      <label for="axis1Select" class="form-label">Axis1</label>
+      <select id="axis1Select" class="form-select" multiple></select>
+      <div>
+        <input 
+          type="radio" 
+          name="axis1Scale" 
+          value="linear" 
+          checked
+        /> Linear
+        <input 
+          type="radio" 
+          name="axis1Scale" 
+          value="log"
+        /> Log
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label for="axis2Select" class="form-label">Axis2</label>
+      <select id="axis2Select" class="form-select" multiple></select>
+      <div>
+        <input 
+          type="radio" 
+          name="axis2Scale" 
+          value="linear" 
+          checked
+        /> Linear
+        <input 
+          type="radio" 
+          name="axis2Scale" 
+          value="log"
+        /> Log
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label for="axis3Select" class="form-label">Axis3</label>
+      <select id="axis3Select" class="form-select" multiple></select>
+      <div>
+        <input 
+          type="radio" 
+          name="axis3Scale" 
+          value="linear" 
+          checked
+        /> Linear
+        <input 
+          type="radio" 
+          name="axis3Scale" 
+          value="log"
+        /> Log
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label for="axis4Select" class="form-label">Axis4</label>
+      <select id="axis4Select" class="form-select" multiple></select>
+      <div>
+        <input 
+          type="radio" 
+          name="axis4Scale" 
+          value="linear" 
+          checked
+        /> Linear
+        <input 
+          type="radio" 
+          name="axis4Scale" 
+          value="log"
+        /> Log
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart -->
+  <div id="graphOutput"></div>
+  <div id="hoverStatus" class="bordered">Hover over the chart to see values.</div>
+
+  <!-- Scripts -->
+  <script>
+    /***********************************************************
+     * Global Variables (simulate stored data in memory)
+     ***********************************************************/
+    let globalData = []; // Will hold the parsed CSV as array-of-objects
+    let timingDeviationMessages = [];
+    let timingCrashEvents = [];
+    let throttlecloseEvents = [];
+
+    /***********************************************************
+     * CSV Parsing Helper
+     ***********************************************************/
+    function parseCSVFile(file, onParsed) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const lines = e.target.result.split(/\r\n|\n/);
+        // Basic check: skip first ~5 lines if needed, handle columns etc.
+        // Adjust as your CSV structure demands. 
+        // The original python code used rows[5:] and 37 columns.
+        const rows = lines.map(line => line.split(','));
+        if (rows.length < 10) {
+          alert("CSV file too short or invalid.");
+          return;
+        }
+
+        // We'll assume row[5] is the start of data, and row[4] is possibly a header.
+        // Adjust if your CSV structure is different.
+        const dataRows = rows.slice(5);
+        const columns = [
+          "timestamp","rpm","ecu_psi","target","boost","pedal","iat","fuelen",
+          "wgdc","throttle","fp_h","ign_1","avg_ign","calc_torque","trims_val",
+          "dme_bt","meth","fp_l","afr","gear","ff","load","clock","map",
+          "afr2","ign_2","ign_3","ign_4","ign_5","ign_6","oilf","waterf",
+          "transf","e85","boost2","trims2","mph"
+        ];
+
+        // Build array-of-objects
+        const result = [];
+        for (let i = 0; i < dataRows.length; i++) {
+          const rowData = dataRows[i];
+          if (rowData.length < columns.length) continue; // skip incomplete lines
+          const obj = {};
+          for (let c = 0; c < columns.length; c++) {
+            let val = parseFloat(rowData[c]);
+            if (Number.isNaN(val)) {
+              val = 0; // or keep as string if needed
+            }
+            obj[columns[c]] = val;
+          }
+          result.push(obj);
+        }
+        onParsed(result);
+      };
+      reader.readAsText(file);
+    }
+
+    /***********************************************************
+     * CHECK FUNCTIONS: Converted from Python to JS
+     ***********************************************************/
+    function checkTiming({
+      mythrottle, mypedal, myign1, myign2, myign3, myign4, myign5, myign6,
+      myrpm, mytimestamp, afr2, mph, fourCylSens, sixCylSens
+    }) {
+      // timingDeviationMessages (global array)
+      // timingCrashEvents (global array)
+      if (afr2 > 10) {
+        // 6-cylinder mode
+        if (mythrottle > 95 && mypedal > 96) {
+          const myigndev = myign2 + myign3 + myign4 + myign5 + myign6;
+          if (
+            myigndev > sixCylSens &&
+            myigndev < ((myign1 - sixCylSens) * 6)
+          ) {
+            const msg = 
+              `Timing Deviation Detected at Timestamp ${mytimestamp}, ` +
+              `RPM: ${myrpm}, Correction: ${myigndev}\n` +
+              `   IGN1: ${myign1}, IGN2: ${myign2}, IGN3: ${myign3}, ` +
+              `IGN4: ${myign4}, IGN5: ${myign5}, IGN6: ${myign6}`;
+            timingDeviationMessages.push(msg);
+          }
+        }
+      } else {
+        // 4-cylinder mode
+        if (mythrottle > 95 && mypedal > 96) {
+          const myigndev = myign2 + myign3 + myign4;
+          if (
+            myigndev > fourCylSens &&
+            myigndev < ((myign1 - fourCylSens) * 4)
+          ) {
+            const msg =
+              `(4Cyl Mode) Timing Deviation Detected at Timestamp ${mytimestamp}, ` +
+              `RPM: ${myrpm}, Correction: ${myigndev}\n` +
+              `   IGN1: ${myign1}, IGN2: ${myign2}, IGN3: ${myign3}, IGN4: ${myign4}`;
+            timingDeviationMessages.push(msg);
+          }
+          // Timing crash
+          if (mph >= 20 && myign1 < 0.01) {
+            timingCrashEvents.push([mytimestamp, mph]);
+          }
+        }
+      }
+    }
+
+    function checkTrims({
+      mythrottle, mypedal, myrpm, mytimestamp, mytrims, mytrims2, myafr1, myafr2
+    }) {
+      let output = "";
+      const myspread = mytrims2 - mytrims;
+      if (mythrottle > 95 && myspread > 10) {
+        output +=
+          `Fuel Trim Separation Detected -- ` +
+          `RPM: ${myrpm}, Trim1: ${mytrims}, Trim2: ${mytrims2}, Spread: ${myspread}, ` +
+          `TS: ${mytimestamp}, AFR1: ${myafr1}, AFR2: ${myafr2}\n`;
+      }
+      if (mythrottle > 95 && mytrims > 50) {
+        output +=
+          `High Fuel Trim Detected (NORMAL for E30 / Map3; could be bad for meth). ` +
+          `Trim1: ${mytrims}, Trim2: ${mytrims2}, RPM: ${myrpm}\n`;
+      }
+      if (mythrottle > 95 && mytrims < 7) {
+        output +=
+          `Low Fuel Trim Detected. Watch for potentially frozen trims. Trim1: ${mytrims}\n`;
+      }
+      return output;
+    }
+
+    function checkHpfp({ mythrottle, mypedal, myrpm, mytimestamp, myfp_h }) {
+      let output = "";
+      if (myfp_h === 0) return output;
+      if (mythrottle > 95 && mypedal > 90 && myfp_h < 10) {
+        output +=
+          `HPFP Issue Detected -- Consider using less E85. ` +
+          `Timestamp: ${mytimestamp}, RPM: ${myrpm}, HPFP: ${myfp_h}\n`;
+      }
+      return output;
+    }
+
+    function checkThrottleClose({ mythrottle, mypedal, myrpm, myboost, myboost2, mytimestamp }) {
+      // throttlecloseEvents (global)
+      if (mypedal > 95 && myrpm > 4000 && mythrottle < 85) {
+        let msg =
+          `Throttle Closure Detected (Consider paddle shifting instead). ` +
+          `TS: ${mytimestamp}, RPM: ${myrpm}, Throttle: ${mythrottle}, Pedal: ${mypedal}`;
+        if ((myboost - myboost2) > 3) {
+          msg +=
+            `\n   Large Boost Drop Detected at RPM: ${myrpm}, ` +
+            `Boost1: ${myboost}, Boost2: ${myboost2}`;
+        }
+        throttlecloseEvents.push(msg);
+      }
+    }
+
+    function checkMethFlow({ mythrottle, mypedal, myrpm, myboost, mytimestamp, mymeth, mytriggercount }) {
+      let output = "";
+      if (mymeth === 0) return output;
+      if (mypedal > 95 && mymeth < 90 && mytriggercount > 1 && myboost > 10) {
+        output +=
+          `Meth Flow Issue Detected! Fix This First (possible air bubbles, purge, or out of meth). ` +
+          `TS: ${mytimestamp}, RPM: ${myrpm}, Boost: ${myboost}, Meth Flow: ${mymeth}\n`;
+      }
+      return output;
+    }
+
+    function checkBoostDeviation({ mythrottle, mypedal, myboost, myboost2, mytimestamp }) {
+      let output = "";
+      if (mythrottle > 95 && Math.abs(myboost - myboost2) > 1.9) {
+        output +=
+          `Boost1 and Boost2 differ significantly (B1: ${myboost}, B2: ${myboost2}, ` +
+          `Diff: ${myboost - myboost2}) -- TS: ${mytimestamp}\n`;
+      }
+      return output;
+    }
+
+    function checkIat({ myrpm, mythrottle, mypedal, myiat }) {
+      let output = "";
+      if (myrpm > 2500 && mythrottle > 95 && myiat > 118) {
+        output +=
+          `Heat Soak Detected! Consider using methanol injection, a better FMIC, ` +
+          `or allowing the car to cool. RPM: ${myrpm}, IAT: ${myiat}\n`;
+      }
+      return output;
+    }
+
+    /***********************************************************
+     * Re-implement run_all_checks in JavaScript
+     ***********************************************************/
+    function runAllChecks(df, fourCylSens = 3.5, sixCylSens = 6.5) {
+      // clear global arrays
+      timingDeviationMessages = [];
+      timingCrashEvents = [];
+      throttlecloseEvents = [];
+
+      let iatOut = "IAT\n-------------------\n";
+      let hpfpOut = "HPFP Report\n--------------------\n";
+      let methflowOut = "Meth Flow Report\n-----------------\n";
+      let boostdevOut = "Boost Deviations\n--------------------\n";
+      let trimsOut = "Fuel Trims\n-------------------------\n";
+
+      // We'll build up strings, then we can do "is it more than just the header?"
+      let iatBuffer = iatOut;
+      let hpfpBuffer = hpfpOut;
+      let methflowBuffer = methflowOut;
+      let boostdevBuffer = boostdevOut;
+      let trimsBuffer = trimsOut;
+
+      const triggercount = 4; // from the python code
+
+      for (let row of df) {
+        const timestamp = row.timestamp;
+        const rpm       = row.rpm;
+        const boost     = row.boost;
+        const throttle  = row.throttle;
+        const pedal     = row.pedal;
+        const iat       = row.iat;
+        const fp_h      = row.fp_h;
+        const ign_1     = row.ign_1;
+        const ign_2     = row.ign_2;
+        const ign_3     = row.ign_3;
+        const ign_4     = row.ign_4;
+        const ign_5     = row.ign_5;
+        const ign_6     = row.ign_6;
+        const afr       = row.afr;
+        const afr2      = row.afr2;
+        const boost2    = row.boost2;
+        const meth      = row.meth;
+        const trims_val = row.trims_val;
+        const trims2    = row.trims2;
+        const mph       = row.mph;
+
+        // iat
+        const tmpIat = checkIat({ myrpm: rpm, mythrottle: throttle, mypedal: pedal, myiat: iat });
+        if (tmpIat.trim().length > 0) {
+          iatBuffer += tmpIat;
+        }
+
+        // timing
+        checkTiming({
+          mythrottle: throttle, 
+          mypedal: pedal,
+          myign1: ign_1,
+          myign2: ign_2,
+          myign3: ign_3,
+          myign4: ign_4,
+          myign5: ign_5,
+          myign6: ign_6,
+          myrpm: rpm,
+          mytimestamp: timestamp,
+          afr2: afr2,
+          mph: mph,
+          fourCylSens,
+          sixCylSens
+        });
+
+        // hpfp
+        const tmpHpfp = checkHpfp({
+          mythrottle: throttle, 
+          mypedal: pedal, 
+          myrpm: rpm, 
+          mytimestamp: timestamp, 
+          myfp_h: fp_h
+        });
+        if (tmpHpfp.trim().length > 0) {
+          hpfpBuffer += tmpHpfp;
+        }
+
+        // throttle close
+        checkThrottleClose({
+          mythrottle: throttle, 
+          mypedal: pedal,
+          myrpm: rpm, 
+          myboost: boost,
+          myboost2: boost2,
+          mytimestamp: timestamp
+        });
+
+        // meth
+        const tmpMeth = checkMethFlow({
+          mythrottle: throttle,
+          mypedal: pedal,
+          myrpm: rpm,
+          myboost: boost,
+          mytimestamp: timestamp,
+          mymeth: meth,
+          mytriggercount: triggercount
+        });
+        if (tmpMeth.trim().length > 0) {
+          methflowBuffer += tmpMeth;
+        }
+
+        // boost dev
+        const tmpBoost = checkBoostDeviation({
+          mythrottle: throttle,
+          mypedal: pedal,
+          myboost: boost,
+          myboost2: boost2,
+          mytimestamp: timestamp
+        });
+        if (tmpBoost.trim().length > 0) {
+          boostdevBuffer += tmpBoost;
+        }
+
+        // trims
+        const tmpTrims = checkTrims({
+          mythrottle: throttle,
+          mypedal: pedal,
+          myrpm: rpm,
+          mytimestamp: timestamp,
+          mytrims: trims_val,
+          mytrims2: trims2,
+          myafr1: afr,
+          myafr2: afr2
+        });
+        if (tmpTrims.trim().length > 0) {
+          trimsBuffer += tmpTrims;
+        }
+      }
+
+      // Summaries for timing crash or throttle closures
+      let timing_crash_summary = "";
+      if (timingCrashEvents.length > 0) {
+        const mphValues = timingCrashEvents.map(evt => evt[1]);
+        const minMph = Math.min(...mphValues);
+        const maxMph = Math.max(...mphValues);
+        const crashCount = timingCrashEvents.length;
+        timing_crash_summary += 
+          "\nTiming Crash Summary\n----------------\n" +
+          `Detected ${crashCount} instance(s) of timing crashing to zero.\n` +
+          `Lowest mph observed: ${minMph}, highest mph observed: ${maxMph}.\n` +
+          "Possible traction control or real ignition issue.\n";
+      }
+
+      let throttleclose_summary = "";
+      if (throttlecloseEvents.length > 5) {
+        throttleclose_summary =
+          "\nThrottle Closure Report\n--------------------\n" +
+          `Detected ${throttlecloseEvents.length} throttle closures.\n`;
+        for (let msg of throttlecloseEvents) {
+          throttleclose_summary += msg + "\n";
+        }
+      }
+
+      // Log length check
+      let log_length_warning = "";
+      const highThrottleRows = df.filter(r => r.throttle > 90);
+      if (highThrottleRows.length > 0) {
+        const mphVals = highThrottleRows.map(r => r.mph);
+        const minMph = Math.min(...mphVals);
+        const maxMph = Math.max(...mphVals);
+        if ((maxMph - minMph) < 65) {
+          log_length_warning =
+            "Log Length Warning:\n" +
+            "Your log does not show a >= 65 mph range at throttle > 90%. " +
+            "Consider 0-100 mph or 1/4 mile.\n\n";
+        }
+      } else {
+        log_length_warning =
+          "Log Length Warning:\n" +
+          "Never detected throttle >90%. Provide a more robust WOT log.\n\n";
+      }
+
+      // Convert buffers to final strings
+      const iat_str = iatBuffer;
+      const hpfp_str = hpfpBuffer;
+      const meth_str = methflowBuffer;
+      const boostdev_str = boostdevBuffer;
+      const trims_str = trimsBuffer;
+
+      // Timing Deviation
+      let timing_dev_str = "";
+      if (timingDeviationMessages.length > 0) {
+        timing_dev_str += 
+          "\nTiming Deviations Detected\n------------------\n" +
+          timingDeviationMessages.join("\n") + "\n";
+      }
+
+      // Reorder sections so non-empty appear first
+      const sections = [
+        { title: "IAT",           text: iat_str,           defaultHeader: "IAT\n-------------------\n" },
+        { title: "HPFP",          text: hpfp_str,          defaultHeader: "HPFP Report\n--------------------\n" },
+        { title: "MethFlow",      text: meth_str,          defaultHeader: "Meth Flow Report\n-----------------\n" },
+        { title: "BoostDev",      text: boostdev_str,      defaultHeader: "Boost Deviations\n--------------------\n" },
+        { title: "Trims",         text: trims_str,         defaultHeader: "Fuel Trims\n-------------------------\n" },
+        { title: "TimingCrash",   text: timing_crash_summary, defaultHeader: "" },
+        { title: "ThrottleClose", text: throttleclose_summary, defaultHeader: "" },
+        { title: "TimingDev",     text: timing_dev_str,    defaultHeader: "" }
+      ];
+
+      function hasData(sec) {
+        const trimmed = sec.text.trim();
+        if (!trimmed) return false;
+        // if it's only as big as the default header => no real data
+        if (trimmed.length <= sec.defaultHeader.trim().length) return false;
+        return true;
+      }
+
+      const nonEmpty = sections.filter(hasData);
+      const empty = sections.filter(s => !hasData(s));
+      const orderedSections = nonEmpty.concat(empty);
+
+      const finalReportList = [];
+      for (let sec of orderedSections) {
+        const trimmed = sec.text.trimEnd();
+        if (trimmed) {
+          finalReportList.push(trimmed);
+        }
+      }
+
+      const finalReport = finalReportList.join("\n\n");
+      return { logLengthWarning: log_length_warning, finalReport };
+    }
+
+    /***********************************************************
+     * Building the multi-axis Plotly chart
+     ***********************************************************/
+    function buildFourAxisFigure({
+      axis1, axis2, axis3, axis4,
+      scale1, scale2, scale3, scale4,
+      df
+    }) {
+      // df is globalData
+      // Plotly traces
+      const traces = [];
+
+      if (axis1 && axis1.length > 0) {
+        axis1.forEach(param => {
+          traces.push({
+            x: df.map(r => r.timestamp),
+            y: df.map(r => r[param]),
+            mode: 'lines',
+            name: param + " (Axis1)",
+            yaxis: 'y'
+          });
+        });
+      }
+      if (axis2 && axis2.length > 0) {
+        axis2.forEach(param => {
+          traces.push({
+            x: df.map(r => r.timestamp),
+            y: df.map(r => r[param]),
+            mode: 'lines',
+            name: param + " (Axis2)",
+            yaxis: 'y2'
+          });
+        });
+      }
+      if (axis3 && axis3.length > 0) {
+        axis3.forEach(param => {
+          traces.push({
+            x: df.map(r => r.timestamp),
+            y: df.map(r => r[param]),
+            mode: 'lines',
+            name: param + " (Axis3)",
+            yaxis: 'y3'
+          });
+        });
+      }
+      if (axis4 && axis4.length > 0) {
+        axis4.forEach(param => {
+          traces.push({
+            x: df.map(r => r.timestamp),
+            y: df.map(r => r[param]),
+            mode: 'lines',
+            name: param + " (Axis4)",
+            yaxis: 'y4'
+          });
+        });
+      }
+
+      const layout = {
+        title: "Multi-Axis Chart",
+        xaxis: { title: "Timestamp" },
+        yaxis: { 
+          title: "Axis1", 
+          type: scale1 || 'linear'
+        },
+        yaxis2: {
+          title: "Axis2",
+          overlaying: 'y',
+          side: 'right',
+          type: scale2 || 'linear'
+        },
+        yaxis3: {
+          title: "Axis3",
+          overlaying: 'y',
+          side: 'left',
+          anchor: 'free',
+          position: 0.15,
+          type: scale3 || 'linear'
+        },
+        yaxis4: {
+          title: "Axis4",
+          overlaying: 'y',
+          side: 'right',
+          anchor: 'free',
+          position: 0.85,
+          type: scale4 || 'linear'
+        },
+        hovermode: 'x unified',
+        legend: { title: { text: "Parameters" } }
+      };
+
+      Plotly.newPlot('graphOutput', traces, layout);
+    }
+
+    /***********************************************************
+     * UI Event Handlers
+     ***********************************************************/
+    const fileInput = document.getElementById('fileInput');
+    const uploadArea = document.getElementById('uploadArea');
+    const rescanButton = document.getElementById('rescanButton');
+
+    // Drag/Drop styling for upload area
+    uploadArea.addEventListener('dragenter', () => uploadArea.classList.add('hover'));
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('hover'));
+    uploadArea.addEventListener('drop', () => uploadArea.classList.remove('hover'));
+
+    // On file selection
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      parseCSVFile(file, (parsedData) => {
+        globalData = parsedData;
+        // Run checks immediately
+        doRunChecks();
+        // Populate dropdowns
+        updateAxisDropdowns();
+        // Build an initial chart (empty or just default picks?)
+        buildFourAxisFigure({
+          axis1: [],
+          axis2: [],
+          axis3: [],
+          axis4: [],
+          scale1: 'linear',
+          scale2: 'linear',
+          scale3: 'linear',
+          scale4: 'linear',
+          df: globalData
+        });
+      });
+    });
+
+    // Re-scan log button
+    rescanButton.addEventListener('click', () => {
+      doRunChecks();
+    });
+
+    // The function that runs the entire check logic
+    function doRunChecks() {
+      if (!globalData || globalData.length === 0) {
+        document.getElementById('reportOutput').textContent = "No file yet.";
+        return;
+      }
+      const fourCyl = parseFloat(document.getElementById('fourCylSens').value) || 3.5;
+      const sixCyl = parseFloat(document.getElementById('sixCylSens').value) || 6.5;
+
+      const { logLengthWarning, finalReport } = runAllChecks(globalData, fourCyl, sixCyl);
+      document.getElementById('logLengthWarning').textContent = logLengthWarning;
+      document.getElementById('reportOutput').textContent = finalReport;
+    }
+
+    /***********************************************************
+     * Populate the axis dropdowns
+     ***********************************************************/
+    function updateAxisDropdowns() {
+      if (!globalData || globalData.length === 0) {
+        return;
+      }
+      // Use the keys of the first row in globalData
+      const columns = Object.keys(globalData[0]).filter(c => c !== 'timestamp');
+      const axis1Select = document.getElementById('axis1Select');
+      const axis2Select = document.getElementById('axis2Select');
+      const axis3Select = document.getElementById('axis3Select');
+      const axis4Select = document.getElementById('axis4Select');
+
+      function populateSelect(selectElem) {
+        selectElem.innerHTML = "";
+        columns.forEach(col => {
+          const option = document.createElement('option');
+          option.value = col;
+          option.textContent = col;
+          selectElem.appendChild(option);
+        });
+      }
+      populateSelect(axis1Select);
+      populateSelect(axis2Select);
+      populateSelect(axis3Select);
+      populateSelect(axis4Select);
+    }
+
+    /***********************************************************
+     * Build chart when user changes any axis dropdown or scale
+     ***********************************************************/
+    const axisSelectors = [
+      'axis1Select', 'axis2Select', 'axis3Select', 'axis4Select'
+    ];
+    axisSelectors.forEach(selId => {
+      document.getElementById(selId).addEventListener('change', buildChartFromUI);
+    });
+
+    const scaleRadios = document.querySelectorAll('input[type=radio]');
+    scaleRadios.forEach(r => r.addEventListener('change', buildChartFromUI));
+
+    function buildChartFromUI() {
+      if (!globalData || globalData.length === 0) {
+        return;
+      }
+      const axis1Select = document.getElementById('axis1Select');
+      const axis2Select = document.getElementById('axis2Select');
+      const axis3Select = document.getElementById('axis3Select');
+      const axis4Select = document.getElementById('axis4Select');
+
+      const getSelected = (sel) => Array.from(sel.selectedOptions).map(opt => opt.value);
+
+      const axis1 = getSelected(axis1Select);
+      const axis2 = getSelected(axis2Select);
+      const axis3 = getSelected(axis3Select);
+      const axis4 = getSelected(axis4Select);
+
+      const scale1 = document.querySelector('input[name="axis1Scale"]:checked')?.value || 'linear';
+      const scale2 = document.querySelector('input[name="axis2Scale"]:checked')?.value || 'linear';
+      const scale3 = document.querySelector('input[name="axis3Scale"]:checked')?.value || 'linear';
+      const scale4 = document.querySelector('input[name="axis4Scale"]:checked')?.value || 'linear';
+
+      buildFourAxisFigure({
+        axis1, axis2, axis3, axis4,
+        scale1, scale2, scale3, scale4,
+        df: globalData
+      });
+    }
+
+    /***********************************************************
+     * Plotly hover event to show info
+     ***********************************************************/
+    const graphOutput = document.getElementById('graphOutput');
+    const hoverStatus = document.getElementById('hoverStatus');
+    graphOutput.addEventListener('plotly_hover', (event) => {
+      if (!event || !event.detail || !event.detail.event) return;
+      const pts = event.detail.event.points;
+      if (!pts) {
+        hoverStatus.textContent = "Hover over the chart to see values.";
+        return;
+      }
+      const linesInfo = pts.map(pt => {
+        const nm = pt.data.name;
+        const xv = pt.x;
+        const yv = pt.y;
+        return `${nm}: X=${xv}, Y=${yv}`;
+      });
+      hoverStatus.textContent = linesInfo.join(" | ");
+    });
+
+    // If user moves away from a point
+    graphOutput.addEventListener('plotly_unhover', () => {
+      hoverStatus.textContent = "Hover over the chart to see values.";
+    });
+
+  </script>
+</body>
+</html>
